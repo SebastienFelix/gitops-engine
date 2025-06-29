@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"fmt"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -465,9 +467,9 @@ func Test_syncTasks_multiStep(t *testing.T) {
 	t.Run("Single", func(t *testing.T) {
 		tasks := syncTasks{{liveObj: testingutils.Annotate(testingutils.NewPod(), common.AnnotationSyncWave, "-1"), phase: common.SyncPhaseSync}}
 		assert.Equal(t, common.SyncPhaseSync, string(tasks.phase()))
-		assert.Equal(t, -1, tasks.wave())
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.waves()))
 		assert.Equal(t, common.SyncPhaseSync, string(tasks.lastPhase()))
-		assert.Equal(t, -1, tasks.lastWave())
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.lastWaves()))
 		assert.False(t, tasks.multiStep())
 	})
 	t.Run("Double", func(t *testing.T) {
@@ -476,9 +478,136 @@ func Test_syncTasks_multiStep(t *testing.T) {
 			{liveObj: testingutils.Annotate(testingutils.NewPod(), common.AnnotationSyncWave, "1"), phase: common.SyncPhasePostSync},
 		}
 		assert.Equal(t, common.SyncPhasePreSync, string(tasks.phase()))
-		assert.Equal(t, -1, tasks.wave())
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.waves()))
 		assert.Equal(t, common.SyncPhasePostSync, string(tasks.lastPhase()))
-		assert.Equal(t, 1, tasks.lastWave())
+		fmt.Println("ICI")
+		fmt.Println(tasks.lastWaves())
+		assert.True(t, reflect.DeepEqual([]int{1}, tasks.lastWaves()))
 		assert.True(t, tasks.multiStep())
 	})
+}
+
+var tasksSingletonNormal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave": "-1",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_waveSingleton(t *testing.T) {
+	tasks := tasksSingletonNormal
+	tasksWaves := tasks.waves()
+    tasksLastWaves := tasks.lastWaves()
+	assert.True(t, reflect.DeepEqual(tasksWaves, []int{-1}))
+	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{-1}))
+}
+
+var tasksNormal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave": "-1",
+					},
+				},
+			},
+		},
+	},
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave": "0",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_waveNormal(t *testing.T) {
+	tasks := tasksNormal
+	tasksWaves := tasks.waves()
+    tasksLastWaves := tasks.lastWaves()
+	assert.True(t, reflect.DeepEqual(tasksWaves, []int{-1}))
+	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{0}))
+}
+
+var tasksBTreeBothMinimal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "2",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "3",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_waveBTree_BothMinimal(t *testing.T) {
+	tasks := tasksBTreeBothMinimal
+	tasksWaves := tasks.waves()
+    tasksLastWaves := tasks.lastWaves()
+	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2,3}))
+	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{2,3}))
+}
+
+var tasksBTreeOneMinimal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "2",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "4",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_waveBTree_OneMinimal(t *testing.T) {
+	tasks := tasksBTreeOneMinimal
+	tasksWaves := tasks.waves()
+    tasksLastWaves := tasks.lastWaves()
+	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2}))
+	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{4}))
 }
