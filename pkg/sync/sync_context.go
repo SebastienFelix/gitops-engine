@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -562,16 +564,16 @@ func (sc *syncContext) Sync() {
 
 	// remove any tasks not in this wave
 	phase := tasks.phase()
-	wave := tasks.wave()
-	finalWave := phase == tasks.lastPhase() && wave == tasks.lastWave()
+	waves := tasks.waves()
+	finalWaves := phase == tasks.lastPhase() && reflect.DeepEqual(waves, tasks.lastWaves())
 
 	// if it is the last phase/wave and the only remaining tasks are non-hooks, the we are successful
 	// EVEN if those objects subsequently degraded
 	// This handles the common case where neither hooks or waves are used and a sync equates to simply an (asynchronous) kubectl apply of manifests, which succeeds immediately.
-	remainingTasks := tasks.Filter(func(t *syncTask) bool { return t.phase != phase || wave != t.wave() || t.isHook() })
+	remainingTasks := tasks.Filter(func(t *syncTask) bool { return t.phase != phase || !slices.Contains(waves, t.wave()) || t.isHook() })
 
-	sc.log.WithValues("phase", phase, "wave", wave, "tasks", tasks, "syncFailTasks", syncFailTasks).V(1).Info("Filtering tasks in correct phase and wave")
-	tasks = tasks.Filter(func(t *syncTask) bool { return t.phase == phase && t.wave() == wave })
+	sc.log.WithValues("phase", phase, "wave", waves, "tasks", tasks, "syncFailTasks", syncFailTasks).V(1).Info("Filtering tasks in correct phase and wave")
+	tasks = tasks.Filter(func(t *syncTask) bool { return t.phase == phase && slices.Contains(waves, t.wave()) })
 
 	sc.setOperationPhase(common.OperationRunning, "one or more tasks are running")
 
@@ -579,7 +581,7 @@ func (sc *syncContext) Sync() {
 	runState := sc.runTasks(tasks, false)
 
 	if sc.syncWaveHook != nil && runState != failed {
-		err := sc.syncWaveHook(phase, wave, finalWave)
+		err := sc.syncWaveHook(phase, waves, finalWaves)
 		if err != nil {
 			sc.deleteHooks(hooksPendingDeletionFailed)
 			sc.setOperationPhase(common.OperationFailed, fmt.Sprintf("SyncWaveHook failed: %v", err))

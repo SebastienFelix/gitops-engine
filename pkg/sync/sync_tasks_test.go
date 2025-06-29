@@ -1,7 +1,10 @@
 package sync
 
 import (
+	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/argoproj/gitops-engine/pkg/sync/common"
+	"github.com/argoproj/gitops-engine/pkg/sync/syncwaves"
 	testingutils "github.com/argoproj/gitops-engine/pkg/utils/testing"
 )
 
@@ -465,9 +469,9 @@ func Test_syncTasks_multiStep(t *testing.T) {
 	t.Run("Single", func(t *testing.T) {
 		tasks := syncTasks{{liveObj: testingutils.Annotate(testingutils.NewPod(), common.AnnotationSyncWave, "-1"), phase: common.SyncPhaseSync}}
 		assert.Equal(t, common.SyncPhaseSync, string(tasks.phase()))
-		assert.Equal(t, -1, tasks.wave())
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.waves()))
 		assert.Equal(t, common.SyncPhaseSync, string(tasks.lastPhase()))
-		assert.Equal(t, -1, tasks.lastWave())
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.lastWaves()))
 		assert.False(t, tasks.multiStep())
 	})
 	t.Run("Double", func(t *testing.T) {
@@ -476,9 +480,150 @@ func Test_syncTasks_multiStep(t *testing.T) {
 			{liveObj: testingutils.Annotate(testingutils.NewPod(), common.AnnotationSyncWave, "1"), phase: common.SyncPhasePostSync},
 		}
 		assert.Equal(t, common.SyncPhasePreSync, string(tasks.phase()))
-		assert.Equal(t, -1, tasks.wave())
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.waves()))
 		assert.Equal(t, common.SyncPhasePostSync, string(tasks.lastPhase()))
-		assert.Equal(t, 1, tasks.lastWave())
+		fmt.Println("ICI")
+		fmt.Println(tasks.lastWaves())
+		assert.True(t, reflect.DeepEqual([]int{1}, tasks.lastWaves()))
 		assert.True(t, tasks.multiStep())
 	})
+}
+
+var tasksSingletonNormal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave": "-1",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_GetSyncTasksWithNoAntecedent_Singleton(t *testing.T) {
+	tasks := tasksSingletonNormal
+	minimalTasks := tasks.GetSyncTasksWithNoAntecedent()
+	assert.Equal(t, tasks, minimalTasks)
+}
+
+var tasksNormal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave": "-1",
+					},
+				},
+			},
+		},
+	},
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave": "0",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_GetSyncTasksWithNoAntecedent_Normal(t *testing.T) {
+	tasks := tasksNormal
+	minimalTasks := tasks.GetSyncTasksWithNoAntecedent()
+	assert.True(t, reflect.DeepEqual(tasksSingletonNormal, minimalTasks))
+}
+
+var tasksBTreeMinimal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "2",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+}
+
+var tasksBTreeBothMinimal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "2",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "3",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_GetSyncTasksWithNoAntecedent_BTree_BothMinimal(t *testing.T) {
+	tasks := tasksBTreeBothMinimal
+	minimalTasks := tasks.GetSyncTasksWithNoAntecedent()
+	assert.True(t, reflect.DeepEqual(tasksBTreeBothMinimal, minimalTasks))
+}
+
+var tasksBTreeOneMinimal = syncTasks{
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "2",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+	{
+		targetObj: &unstructured.Unstructured{
+			Object: map[string]any{
+				"metadata": map[string]any{
+					"annotations": map[string]any{
+						"argocd.argoproj.io/sync-wave":       "4",
+						"argocd.argoproj.io/sync-wave-order": "BTree",
+					},
+				},
+			},
+		},
+	},
+}
+
+func Test_GetSyncTasksWithNoAntecedent_BTree_OneMinimal(t *testing.T) {
+	tasks := tasksBTreeOneMinimal
+	minimalTasks := tasks.GetSyncTasksWithNoAntecedent()
+	tasksBTreeOneMinimalWaves := tasksBTreeOneMinimal.Map(func(task *syncTask) string {
+		return strconv.Itoa(syncwaves.Wave(task.obj()))
+	})
+	minimalTasksWaves := minimalTasks.Map(func(task *syncTask) string {
+		return strconv.Itoa(syncwaves.Wave(task.obj()))
+	})
+
+	assert.True(t, reflect.DeepEqual(tasksBTreeOneMinimalWaves, minimalTasksWaves))
 }

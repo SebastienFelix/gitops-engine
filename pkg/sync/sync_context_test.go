@@ -1631,10 +1631,10 @@ func TestSyncWaveHook(t *testing.T) {
 	syncCtx.hooks = []*unstructured.Unstructured{pod3}
 
 	called := false
-	syncCtx.syncWaveHook = func(phase synccommon.SyncPhase, wave int, final bool) error {
+	syncCtx.syncWaveHook = func(phase synccommon.SyncPhase, waves []int, final bool) error {
 		called = true
 		assert.Equal(t, synccommon.SyncPhaseSync, string(phase))
-		assert.Equal(t, -1, wave)
+		assert.True(t, reflect.DeepEqual([]int{-1}, waves))
 		assert.False(t, final)
 		return nil
 	}
@@ -1644,7 +1644,7 @@ func TestSyncWaveHook(t *testing.T) {
 	// call sync again, it should not invoke the SyncWaveHook callback since we only should be
 	// doing this after an apply, and not every reconciliation
 	called = false
-	syncCtx.syncWaveHook = func(_ synccommon.SyncPhase, _ int, _ bool) error {
+	syncCtx.syncWaveHook = func(_ synccommon.SyncPhase, _ []int, _ bool) error {
 		called = true
 		return nil
 	}
@@ -1657,10 +1657,10 @@ func TestSyncWaveHook(t *testing.T) {
 	pod1Res.HookPhase = synccommon.OperationSucceeded
 	syncCtx.syncRes[resourceResultKey(pod1Res.ResourceKey, synccommon.SyncPhaseSync)] = pod1Res
 	called = false
-	syncCtx.syncWaveHook = func(phase synccommon.SyncPhase, wave int, final bool) error {
+	syncCtx.syncWaveHook = func(phase synccommon.SyncPhase, waves []int, final bool) error {
 		called = true
 		assert.Equal(t, synccommon.SyncPhaseSync, string(phase))
-		assert.Equal(t, 0, wave)
+		assert.True(t, reflect.DeepEqual([]int{0}, waves))
 		assert.False(t, final)
 		return nil
 	}
@@ -1673,10 +1673,10 @@ func TestSyncWaveHook(t *testing.T) {
 	pod2Res.HookPhase = synccommon.OperationSucceeded
 	syncCtx.syncRes[resourceResultKey(pod2Res.ResourceKey, synccommon.SyncPhaseSync)] = pod2Res
 	called = false
-	syncCtx.syncWaveHook = func(phase synccommon.SyncPhase, wave int, final bool) error {
+	syncCtx.syncWaveHook = func(phase synccommon.SyncPhase, waves []int, final bool) error {
 		called = true
 		assert.Equal(t, synccommon.SyncPhasePostSync, string(phase))
-		assert.Equal(t, 0, wave)
+		assert.True(t, reflect.DeepEqual([]int{0}, waves))
 		assert.True(t, final)
 		return nil
 	}
@@ -1695,7 +1695,7 @@ func TestSyncWaveHookFail(t *testing.T) {
 	})
 
 	called := false
-	syncCtx.syncWaveHook = func(_ synccommon.SyncPhase, _ int, _ bool) error {
+	syncCtx.syncWaveHook = func(_ synccommon.SyncPhase, _ []int, _ bool) error {
 		called = true
 		return errors.New("intentional error")
 	}
@@ -1728,7 +1728,7 @@ func TestPruneLast(t *testing.T) {
 		assert.True(t, successful)
 		assert.Len(t, tasks, 3)
 		// last wave is the last sync wave for non-prune task + 1
-		assert.Equal(t, 1, tasks.lastWave())
+		assert.True(t, reflect.DeepEqual([]int{1}, tasks.lastWaves()))
 	})
 
 	t.Run("syncPhaseDifferentWave", func(t *testing.T) {
@@ -1744,7 +1744,7 @@ func TestPruneLast(t *testing.T) {
 		assert.True(t, successful)
 		assert.Len(t, tasks, 3)
 		// last wave is the last sync wave for tasks + 1
-		assert.Equal(t, 8, tasks.lastWave())
+		assert.True(t, reflect.DeepEqual([]int{8}, tasks.lastWaves()))
 	})
 
 	t.Run("pruneLastIndividualResources", func(t *testing.T) {
@@ -1762,7 +1762,7 @@ func TestPruneLast(t *testing.T) {
 		assert.True(t, successful)
 		assert.Len(t, tasks, 3)
 		// last wave is the last sync wave for tasks + 1
-		assert.Equal(t, 8, tasks.lastWave())
+		assert.True(t, reflect.DeepEqual([]int{8}, tasks.lastWaves()))
 	})
 }
 

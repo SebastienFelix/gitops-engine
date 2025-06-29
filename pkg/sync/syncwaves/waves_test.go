@@ -13,3 +13,9 @@ func TestWave(t *testing.T) {
 	assert.Equal(t, 1, Wave(testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave", "1")))
 	assert.Equal(t, 1, Wave(testingutils.Annotate(testingutils.NewPod(), "helm.sh/hook-weight", "1")))
 }
+
+func TestWaveOrdering(t *testing.T) {
+	assert.Equal(t, "Normal", WaveOrdering(testingutils.NewPod()))
+	assert.Equal(t, "Normal", Wave(testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave-order", "Normal")))
+	assert.Equal(t, "BTree", Wave(testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave-order", "BTree")))
+}

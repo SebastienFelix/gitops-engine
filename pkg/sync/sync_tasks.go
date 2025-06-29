@@ -2,12 +2,15 @@ package sync
 
 import (
 	"fmt"
+	"math"
+	"reflect"
 	"sort"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/argoproj/gitops-engine/pkg/sync/common"
+	"github.com/argoproj/gitops-engine/pkg/sync/syncwaves"
 	"github.com/argoproj/gitops-engine/pkg/utils/kube"
 )
 
@@ -137,6 +140,70 @@ func (s syncTasks) Sort() {
 	})
 }
 
+func LessBTree(u int, v int) bool {
+	if (u <= 1) && (v <= 1) {
+		return u < v
+	}
+	if u <= 1 {
+		return true
+	}
+	if v <= 1 {
+		return false
+	}
+	xMax := int(math.Floor(math.Log2(float64(v)/float64(u))) + 1)
+	for i := 1; i <= xMax; i++ {
+		N := int(math.Pow(2, float64(i)))
+		w := v - int(N)*u
+		if (w >= 0) && (w < N) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s syncTasks) GetSyncTasksWithNoAntecedent() syncTasks {
+	tasksWithNoAntecedent := syncTasks{}
+	for iSyncTask := range s {
+		candidateTask := s[iSyncTask]
+		candidateTaskWaveOrdering := syncwaves.WaveOrdering(candidateTask.obj())
+		candidateTaskHasNoAntecedent := true
+		for jSyncTask := range s {
+			task := s[jSyncTask]
+			taskWaveOrdering := syncwaves.WaveOrdering(task.obj())
+			if (candidateTaskWaveOrdering == "Normal") && (taskWaveOrdering == "Normal") {
+				if syncwaves.Wave(task.obj()) < syncwaves.Wave(candidateTask.obj()) {
+					candidateTaskHasNoAntecedent = false
+					break
+				}
+			}
+			if (candidateTaskWaveOrdering == "Normal") && (taskWaveOrdering == "BTree") {
+				if syncwaves.Wave(task.obj()) < syncwaves.Wave(candidateTask.obj()) {
+					// Warning, a resource using Normal syncwave ordering will always be synced before a
+					// resource using a BTree syncwave ordering, even it has a greater syncwave value.
+				}
+			}
+			if (candidateTaskWaveOrdering == "Btree") && (taskWaveOrdering == "Normal") {
+				candidateTaskHasNoAntecedent = false
+				break
+			}
+			if (candidateTaskWaveOrdering == "Btree") && (taskWaveOrdering == "BTree") {
+				fmt.Println("TASK WAVE")
+				fmt.Println(syncwaves.Wave(task.obj()))
+				fmt.Println("CANDIDATE TASK WAVE")
+				fmt.Println(syncwaves.Wave(candidateTask.obj()))
+				if LessBTree(syncwaves.Wave(task.obj()), syncwaves.Wave(candidateTask.obj())) {
+					candidateTaskHasNoAntecedent = false
+					break
+				}
+			}
+		}
+		if candidateTaskHasNoAntecedent {
+			tasksWithNoAntecedent = append(tasksWithNoAntecedent, candidateTask)
+		}
+	}
+	return tasksWithNoAntecedent
+}
+
 // adjust order of tasks and bubble up tasks which are dependencies of other tasks
 // (e.g. namespace sync should happen before resources that resides in that namespace)
 func (s syncTasks) adjustDeps(isDep func(obj *unstructured.Unstructured) (string, bool), doesRefDep func(obj *unstructured.Unstructured) (string, bool)) {
@@ -250,11 +317,33 @@ func (s syncTasks) phase() common.SyncPhase {
 	return ""
 }
 
-func (s syncTasks) wave() int {
-	if len(s) > 0 {
-		return s[0].wave()
+func (s syncTasks) waves() []int {
+	var waves []int
+	tasksNormalWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "Normal" })
+	tasksBTreeWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "BTree" })
+	if len(tasksNormalWaves) > 0 {
+		waves = append(waves, tasksNormalWaves[0].wave())
+		return waves
 	}
-	return 0
+	if len(tasksBTreeWaves) > 0 {
+		for iSyncTask := range tasksBTreeWaves {
+			candidateTask := tasksBTreeWaves[iSyncTask]
+			candidateTaskHasNoAntecedent := true
+			for jSyncTask := range tasksBTreeWaves {
+				task := tasksBTreeWaves[jSyncTask]
+				if LessBTree(syncwaves.Wave(task.obj()), syncwaves.Wave(candidateTask.obj())) {
+					candidateTaskHasNoAntecedent = false
+					break
+				}
+			}
+			if candidateTaskHasNoAntecedent {
+				waves = append(waves, syncwaves.Wave(candidateTask.obj()))
+			}
+		}
+		return waves
+	}
+	waves = append(waves, 0)
+	return waves
 }
 
 func (s syncTasks) lastPhase() common.SyncPhase {
@@ -264,13 +353,42 @@ func (s syncTasks) lastPhase() common.SyncPhase {
 	return ""
 }
 
-func (s syncTasks) lastWave() int {
-	if len(s) > 0 {
-		return s[len(s)-1].wave()
+func (s syncTasks) lastWaves() []int {
+	tasksNormalWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "Normal" })
+	tasksBTreeWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "BTree" })
+
+	var lastwaves []int
+
+	if len(tasksBTreeWaves) > 0 && len(tasksNormalWaves) > 0 {
+		lastwaves = append(lastwaves, tasksNormalWaves[len(tasksNormalWaves)-1].wave()+1)
+		return lastwaves
 	}
-	return 0
+	if len(tasksNormalWaves) > 0 {
+		lastwaves = append(lastwaves, tasksNormalWaves[len(tasksNormalWaves)-1].wave())
+		return lastwaves
+	}
+	if len(tasksBTreeWaves) > 0 {
+		for iSyncTask := range tasksBTreeWaves {
+			candidateTask := s[iSyncTask]
+			candidateTaskHasNoSuccessor := true
+			for jSyncTask := range s {
+				task := s[jSyncTask]
+				if LessBTree(syncwaves.Wave(candidateTask.obj()), syncwaves.Wave(task.obj())) {
+					candidateTaskHasNoSuccessor = false
+					break
+				}
+
+			}
+			if candidateTaskHasNoSuccessor {
+				lastwaves = append(lastwaves, syncwaves.Wave(candidateTask.obj()))
+			}
+		}
+		return lastwaves
+	}
+	lastwaves = append(lastwaves, 0)
+	return lastwaves
 }
 
 func (s syncTasks) multiStep() bool {
-	return s.wave() != s.lastWave() || s.phase() != s.lastPhase()
+	return !reflect.DeepEqual(s.waves(), s.lastWaves()) || s.phase() != s.lastPhase()
 }
