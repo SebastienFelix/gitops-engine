@@ -92,10 +92,10 @@ The `argocd.argoproj.io/sync-wave-order` annotation define the type of wave's or
 
 example of sync-waves ordering using BTree:
 
-	    1  ----->  2  ----->  4
-		   \          \---->  5
-			\--->  3  ----->  6
-			          \---->  7
+        1  ----->  2  ----->  4
+           \          \---->  5
+            \--->  3  ----->  6
+                      \---->  7
 
 Note that a resource using a BTree ordering for it's sync-wave will always be synced after all resources using a Normal ordering.
 

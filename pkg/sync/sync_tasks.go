@@ -274,13 +274,13 @@ func (s syncTasks) phase() common.SyncPhase {
 	return ""
 }
 
-func (s syncTasks) waves() []int {
+func (s syncTasks) waves() ([]int, string) {
 	var waves []int
 	tasksNormalWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "Normal" })
 	tasksBTreeWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "BTree" })
 	if len(tasksNormalWaves) > 0 {
 		waves = append(waves, tasksNormalWaves[0].wave())
-		return waves
+		return waves, "Normal"
 	}
 	if len(tasksBTreeWaves) > 0 {
 		for iSyncTask := range tasksBTreeWaves {
@@ -297,10 +297,10 @@ func (s syncTasks) waves() []int {
 				waves = append(waves, syncwaves.Wave(candidateTask.obj()))
 			}
 		}
-		return waves
+		return waves, "BTree"
 	}
 	waves = append(waves, 0)
-	return waves
+	return waves, "Normal"
 }
 
 func (s syncTasks) lastPhase() common.SyncPhase {
@@ -310,7 +310,7 @@ func (s syncTasks) lastPhase() common.SyncPhase {
 	return ""
 }
 
-func (s syncTasks) lastWaves() []int {
+func (s syncTasks) lastWaves() ([]int, string) {
 	tasksNormalWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "Normal" })
 	tasksBTreeWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "BTree" })
 
@@ -318,11 +318,11 @@ func (s syncTasks) lastWaves() []int {
 
 	if len(tasksBTreeWaves) > 0 && len(tasksNormalWaves) > 0 {
 		lastwaves = append(lastwaves, tasksNormalWaves[len(tasksNormalWaves)-1].wave()+1)
-		return lastwaves
+		return lastwaves, "Normal"
 	}
 	if len(tasksNormalWaves) > 0 {
 		lastwaves = append(lastwaves, tasksNormalWaves[len(tasksNormalWaves)-1].wave())
-		return lastwaves
+		return lastwaves, "Normal"
 	}
 	if len(tasksBTreeWaves) > 0 {
 		for iSyncTask := range tasksBTreeWaves {
@@ -340,12 +340,14 @@ func (s syncTasks) lastWaves() []int {
 				lastwaves = append(lastwaves, syncwaves.Wave(candidateTask.obj()))
 			}
 		}
-		return lastwaves
+		return lastwaves, "Btree"
 	}
 	lastwaves = append(lastwaves, 0)
-	return lastwaves
+	return lastwaves, "Normal"
 }
 
 func (s syncTasks) multiStep() bool {
-	return !reflect.DeepEqual(s.waves(), s.lastWaves()) || s.phase() != s.lastPhase()
+	waves, _ := s.waves()
+	lastWaves, _ := s.lastWaves()
+	return !reflect.DeepEqual(waves, lastWaves) || s.phase() != s.lastPhase()
 }

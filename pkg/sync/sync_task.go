@@ -16,14 +16,15 @@ import (
 // indicates the live object needs to be pruned. A liveObj of nil indicates the object has yet to
 // be deployed
 type syncTask struct {
-	phase          common.SyncPhase
-	liveObj        *unstructured.Unstructured
-	targetObj      *unstructured.Unstructured
-	skipDryRun     bool
-	syncStatus     common.ResultCode
-	operationState common.OperationPhase
-	message        string
-	waveOverride   *int
+	phase                common.SyncPhase
+	liveObj              *unstructured.Unstructured
+	targetObj            *unstructured.Unstructured
+	skipDryRun           bool
+	syncStatus           common.ResultCode
+	operationState       common.OperationPhase
+	message              string
+	waveOverride         *int
+	waveOrderingOverride *string
 }
 
 func ternary(val bool, a, b string) string {
@@ -61,6 +62,13 @@ func (t *syncTask) wave() int {
 		return *t.waveOverride
 	}
 	return syncwaves.Wave(t.obj())
+}
+
+func (t *syncTask) waveOrdering() string {
+	if t.waveOrderingOverride != nil {
+		return *t.waveOrderingOverride
+	}
+	return syncwaves.WaveOrdering(t.obj())
 }
 
 func (t *syncTask) isHook() bool {

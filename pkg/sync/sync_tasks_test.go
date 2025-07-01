@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"fmt"
 	"reflect"
 	"sort"
 	"testing"
@@ -467,9 +466,11 @@ func Test_syncTasks_multiStep(t *testing.T) {
 	t.Run("Single", func(t *testing.T) {
 		tasks := syncTasks{{liveObj: testingutils.Annotate(testingutils.NewPod(), common.AnnotationSyncWave, "-1"), phase: common.SyncPhaseSync}}
 		assert.Equal(t, common.SyncPhaseSync, string(tasks.phase()))
-		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.waves()))
+		tasksWaves, _ := tasks.waves()
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasksWaves))
 		assert.Equal(t, common.SyncPhaseSync, string(tasks.lastPhase()))
-		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.lastWaves()))
+		tasksLastWaves, _ := tasks.lastWaves()
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasksLastWaves))
 		assert.False(t, tasks.multiStep())
 	})
 	t.Run("Double", func(t *testing.T) {
@@ -478,11 +479,11 @@ func Test_syncTasks_multiStep(t *testing.T) {
 			{liveObj: testingutils.Annotate(testingutils.NewPod(), common.AnnotationSyncWave, "1"), phase: common.SyncPhasePostSync},
 		}
 		assert.Equal(t, common.SyncPhasePreSync, string(tasks.phase()))
-		assert.True(t, reflect.DeepEqual([]int{-1}, tasks.waves()))
+		tasksWaves, _ := tasks.waves()
+		assert.True(t, reflect.DeepEqual([]int{-1}, tasksWaves))
 		assert.Equal(t, common.SyncPhasePostSync, string(tasks.lastPhase()))
-		fmt.Println("ICI")
-		fmt.Println(tasks.lastWaves())
-		assert.True(t, reflect.DeepEqual([]int{1}, tasks.lastWaves()))
+		tasksLastWaves, _ := tasks.lastWaves()
+		assert.True(t, reflect.DeepEqual([]int{1}, tasksLastWaves))
 		assert.True(t, tasks.multiStep())
 	})
 }
@@ -503,8 +504,8 @@ var tasksSingletonNormal = syncTasks{
 
 func Test_waveSingleton(t *testing.T) {
 	tasks := tasksSingletonNormal
-	tasksWaves := tasks.waves()
-    tasksLastWaves := tasks.lastWaves()
+	tasksWaves, _ := tasks.waves()
+	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{-1}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{-1}))
 }
@@ -536,8 +537,8 @@ var tasksNormal = syncTasks{
 
 func Test_waveNormal(t *testing.T) {
 	tasks := tasksNormal
-	tasksWaves := tasks.waves()
-    tasksLastWaves := tasks.lastWaves()
+	tasksWaves, _ := tasks.waves()
+	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{-1}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{0}))
 }
@@ -571,10 +572,10 @@ var tasksBTreeBothMinimal = syncTasks{
 
 func Test_waveBTree_BothMinimal(t *testing.T) {
 	tasks := tasksBTreeBothMinimal
-	tasksWaves := tasks.waves()
-    tasksLastWaves := tasks.lastWaves()
-	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2,3}))
-	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{2,3}))
+	tasksWaves, _ := tasks.waves()
+	tasksLastWaves, _ := tasks.lastWaves()
+	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2, 3}))
+	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{2, 3}))
 }
 
 var tasksBTreeOneMinimal = syncTasks{
@@ -606,8 +607,8 @@ var tasksBTreeOneMinimal = syncTasks{
 
 func Test_waveBTree_OneMinimal(t *testing.T) {
 	tasks := tasksBTreeOneMinimal
-	tasksWaves := tasks.waves()
-    tasksLastWaves := tasks.lastWaves()
+	tasksWaves, _ := tasks.waves()
+	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{4}))
 }

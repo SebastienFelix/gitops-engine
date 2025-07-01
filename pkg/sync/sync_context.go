@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"sort"
@@ -564,8 +565,9 @@ func (sc *syncContext) Sync() {
 
 	// remove any tasks not in this wave
 	phase := tasks.phase()
-	waves := tasks.waves()
-	finalWaves := phase == tasks.lastPhase() && reflect.DeepEqual(waves, tasks.lastWaves())
+	waves, wavesOrdering := tasks.waves()
+	lastWaves, lastWavesOrdering := tasks.lastWaves()
+	finalWaves := phase == tasks.lastPhase() && reflect.DeepEqual(waves, lastWaves) && wavesOrdering == lastWavesOrdering
 
 	// if it is the last phase/wave and the only remaining tasks are non-hooks, the we are successful
 	// EVEN if those objects subsequently degraded
@@ -573,7 +575,9 @@ func (sc *syncContext) Sync() {
 	remainingTasks := tasks.Filter(func(t *syncTask) bool { return t.phase != phase || !slices.Contains(waves, t.wave()) || t.isHook() })
 
 	sc.log.WithValues("phase", phase, "wave", waves, "tasks", tasks, "syncFailTasks", syncFailTasks).V(1).Info("Filtering tasks in correct phase and wave")
-	tasks = tasks.Filter(func(t *syncTask) bool { return t.phase == phase && slices.Contains(waves, t.wave()) })
+	tasks = tasks.Filter(func(t *syncTask) bool {
+		return t.phase == phase && slices.Contains(waves, t.wave()) && t.waveOrdering() == wavesOrdering
+	})
 
 	sc.setOperationPhase(common.OperationRunning, "one or more tasks are running")
 
@@ -902,51 +906,122 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 	}
 
 	// for prune tasks, modify the waves for proper cleanup i.e reverse of sync wave (creation order)
-	pruneTasks := make(map[int][]*syncTask)
+	normalPruneTasks := make(map[int][]*syncTask)
 	for _, task := range tasks {
-		if task.isPrune() {
-			pruneTasks[task.wave()] = append(pruneTasks[task.wave()], task)
+		//if task.isPrune() {
+		if task.isPrune() && task.waveOrdering() == "Normal" {
+			normalPruneTasks[task.wave()] = append(normalPruneTasks[task.wave()], task)
 		}
 	}
 
-	var uniquePruneWaves []int
-	for k := range pruneTasks {
-		uniquePruneWaves = append(uniquePruneWaves, k)
+	var uniqueNormalPruneWaves []int
+	for k := range normalPruneTasks {
+		uniqueNormalPruneWaves = append(uniqueNormalPruneWaves, k)
 	}
-	sort.Ints(uniquePruneWaves)
 
-	// reorder waves for pruning tasks using symmetric swap on prune waves
-	n := len(uniquePruneWaves)
-	for i := 0; i < n/2; i++ {
-		// waves to swap
-		startWave := uniquePruneWaves[i]
-		endWave := uniquePruneWaves[n-1-i]
+	sort.Ints(uniqueNormalPruneWaves)
 
-		for _, task := range pruneTasks[startWave] {
-			task.waveOverride = &endWave
+	bTreePruneTasks := make(map[int][]*syncTask)
+	for _, task := range tasks {
+		if task.isPrune() && task.waveOrdering() == "BTree" {
+			//if task.isPrune() && task.waveOrdering() == "Normal" {
+			bTreePruneTasks[task.wave()] = append(bTreePruneTasks[task.wave()], task)
+		}
+	}
+
+	if len(bTreePruneTasks) > 0 {
+		var uniqueBTreePruneWaves []int
+		for k := range bTreePruneTasks {
+			uniqueBTreePruneWaves = append(uniqueBTreePruneWaves, k)
 		}
 
-		for _, task := range pruneTasks[endWave] {
-			task.waveOverride = &startWave
+		sort.Ints(uniqueBTreePruneWaves)
+
+		pruneWaves := []int{0}
+		for i := 1; i < len(uniqueNormalPruneWaves); i++ {
+			pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1]+1)
+		}
+		if len(uniqueNormalPruneWaves) != 0 {
+			pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1]+1)
+		}
+		for i := 1; i < len(uniqueBTreePruneWaves); i++ {
+			if int(math.Floor(math.Log2(float64(uniqueBTreePruneWaves[i])))) == int(math.Floor(math.Log2(float64(uniqueBTreePruneWaves[i-1])))) {
+				pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1])
+			} else {
+				pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1]+1)
+			}
+		}
+
+		reversedPruneWaves := []int{}
+		for i := 0; i < len(pruneWaves); i++ {
+			reversedPruneWaves = append(reversedPruneWaves, int(math.Pow(2, float64(pruneWaves[len(pruneWaves)-1-i]))))
+		}
+
+		bTreeWaveOrdering := "BTree"
+
+		for i := 0; i < len(uniqueNormalPruneWaves); i++ {
+			// waves to swap
+			iWave := uniqueNormalPruneWaves[i]
+
+			for _, task := range normalPruneTasks[iWave] {
+				task.waveOverride = &reversedPruneWaves[i]
+				task.waveOrderingOverride = &bTreeWaveOrdering
+			}
+		}
+
+		for i := len(uniqueNormalPruneWaves); i < len(uniqueNormalPruneWaves)+len(uniqueBTreePruneWaves); i++ {
+			// waves to swap
+			iWave := uniqueBTreePruneWaves[i-len(uniqueNormalPruneWaves)]
+
+			for _, task := range bTreePruneTasks[iWave] {
+				task.waveOverride = &(reversedPruneWaves[i])
+				task.waveOrderingOverride = &bTreeWaveOrdering
+			}
+		}
+
+	} else {
+
+		// reorder waves for pruning tasks using symmetric swap on prune waves
+		n := len(uniqueNormalPruneWaves)
+		for i := 0; i < n/2; i++ {
+			// waves to swap
+			startWave := uniqueNormalPruneWaves[i]
+			endWave := uniqueNormalPruneWaves[n-1-i]
+
+			for _, task := range normalPruneTasks[startWave] {
+				task.waveOverride = &endWave
+			}
+
+			for _, task := range normalPruneTasks[endWave] {
+				task.waveOverride = &startWave
+			}
 		}
 	}
 
 	// for pruneLast tasks, modify the wave to sync phase last wave of tasks + 1
 	// to ensure proper cleanup, syncPhaseLastWave should also consider prune tasks to determine last wave
 	syncPhaseLastWave := 0
+	syncPhaseLastWaveOrdering := "Normal"
 	for _, task := range tasks {
 		if task.phase == common.SyncPhaseSync {
 			if task.wave() > syncPhaseLastWave {
 				syncPhaseLastWave = task.wave()
+				syncPhaseLastWaveOrdering = task.waveOrdering()
 			}
 		}
 	}
-	syncPhaseLastWave = syncPhaseLastWave + 1
+
+	if syncPhaseLastWaveOrdering == "Normal" {
+		syncPhaseLastWave = syncPhaseLastWave + 1
+	} else {
+		syncPhaseLastWave = int(math.Pow(2, math.Floor(math.Log2(float64(syncPhaseLastWave))+1)))
+	}
 
 	for _, task := range tasks {
 		if task.isPrune() &&
 			(sc.pruneLast || resourceutil.HasAnnotationOption(task.liveObj, common.AnnotationSyncOptions, common.SyncOptionPruneLast)) {
 			task.waveOverride = &syncPhaseLastWave
+			task.waveOrderingOverride = &syncPhaseLastWaveOrdering
 		}
 	}
 
