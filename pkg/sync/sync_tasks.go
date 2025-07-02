@@ -161,6 +161,17 @@ func LessBTree(u int, v int) bool {
 	return false
 }
 
+func biggestPowerOf2InferiorThan(n int) int {
+	if n < 1 {
+		return 0
+	}
+	i := 1
+	for i <= n {
+		i = i * 2
+	}
+	return i / 2
+}
+
 // adjust order of tasks and bubble up tasks which are dependencies of other tasks
 // (e.g. namespace sync should happen before resources that resides in that namespace)
 func (s syncTasks) adjustDeps(isDep func(obj *unstructured.Unstructured) (string, bool), doesRefDep func(obj *unstructured.Unstructured) (string, bool)) {
