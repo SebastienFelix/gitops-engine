@@ -906,25 +906,26 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 	}
 
 	// for prune tasks, modify the waves for proper cleanup i.e reverse of sync wave (creation order)
+	// if all prune tasks have a normal syncWaveOrdering, use the legacy method. Otherwise, change the
+	// syncWaveOrdering of all prune tasks to BTree and modify the waves to decreasing power of 2.
+	// For prune tasks which already had a BTree syncWaveOrdering, set an identical syncWave to tasks which
+	// have the same level in a complete binary tree rooted at 1 where each node n has 2*n and 2*n+1 as children.
+
 	normalPruneTasks := make(map[int][]*syncTask)
 	for _, task := range tasks {
-		//if task.isPrune() {
 		if task.isPrune() && task.waveOrdering() == "Normal" {
 			normalPruneTasks[task.wave()] = append(normalPruneTasks[task.wave()], task)
 		}
 	}
-
 	var uniqueNormalPruneWaves []int
 	for k := range normalPruneTasks {
 		uniqueNormalPruneWaves = append(uniqueNormalPruneWaves, k)
 	}
 
 	sort.Ints(uniqueNormalPruneWaves)
-
 	bTreePruneTasks := make(map[int][]*syncTask)
 	for _, task := range tasks {
 		if task.isPrune() && task.waveOrdering() == "BTree" {
-			//if task.isPrune() && task.waveOrdering() == "Normal" {
 			bTreePruneTasks[task.wave()] = append(bTreePruneTasks[task.wave()], task)
 		}
 	}
@@ -934,47 +935,57 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 		for k := range bTreePruneTasks {
 			uniqueBTreePruneWaves = append(uniqueBTreePruneWaves, k)
 		}
-
 		sort.Ints(uniqueBTreePruneWaves)
 
 		pruneWaves := []int{0}
 		for i := 1; i < len(uniqueNormalPruneWaves); i++ {
-			pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1]+1)
+			pruneWaves = append(pruneWaves, i)
 		}
+		nextPotentialWave := len(uniqueNormalPruneWaves)
 		if len(uniqueNormalPruneWaves) != 0 {
-			pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1]+1)
+			pruneWaves = append(pruneWaves, nextPotentialWave)
 		}
 		for i := 1; i < len(uniqueBTreePruneWaves); i++ {
-			if int(math.Floor(math.Log2(float64(uniqueBTreePruneWaves[i])))) == int(math.Floor(math.Log2(float64(uniqueBTreePruneWaves[i-1])))) {
-				pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1])
+			currentBTreeWaveLevel := biggestPowerOf2InferiorThan(uniqueBTreePruneWaves[i])
+			previousBTreeWaveLevel := biggestPowerOf2InferiorThan(uniqueBTreePruneWaves[i-1])
+			if currentBTreeWaveLevel == previousBTreeWaveLevel {
+				pruneWaves = append(pruneWaves, nextPotentialWave)
 			} else {
-				pruneWaves = append(pruneWaves, pruneWaves[len(pruneWaves)-1]+1)
+				nextPotentialWave++
+				pruneWaves = append(pruneWaves, nextPotentialWave)
 			}
 		}
 
-		reversedPruneWaves := []int{}
-		for i := 0; i < len(pruneWaves); i++ {
-			reversedPruneWaves = append(reversedPruneWaves, int(math.Pow(2, float64(pruneWaves[len(pruneWaves)-1-i]))))
+		bTreeWave := int(math.Pow(2, float64(pruneWaves[len(pruneWaves)-1])))
+		newPruneWaves := []int{bTreeWave}
+		n := len(pruneWaves)
+		for i := 1; i < len(pruneWaves); i++ {
+			if pruneWaves[n-i-1] == pruneWaves[n-i] {
+				newPruneWaves = append(newPruneWaves, bTreeWave)
+			} else {
+				bTreeWave = bTreeWave / 2
+				newPruneWaves = append(newPruneWaves, bTreeWave)
+			}
 		}
 
 		bTreeWaveOrdering := "BTree"
 
 		for i := 0; i < len(uniqueNormalPruneWaves); i++ {
-			// waves to swap
+			// Normal waves to reorder
 			iWave := uniqueNormalPruneWaves[i]
 
 			for _, task := range normalPruneTasks[iWave] {
-				task.waveOverride = &reversedPruneWaves[i]
+				task.waveOverride = &newPruneWaves[i]
 				task.waveOrderingOverride = &bTreeWaveOrdering
 			}
 		}
 
 		for i := len(uniqueNormalPruneWaves); i < len(uniqueNormalPruneWaves)+len(uniqueBTreePruneWaves); i++ {
-			// waves to swap
+			// BTree waves to reorder
 			iWave := uniqueBTreePruneWaves[i-len(uniqueNormalPruneWaves)]
 
 			for _, task := range bTreePruneTasks[iWave] {
-				task.waveOverride = &(reversedPruneWaves[i])
+				task.waveOverride = &(newPruneWaves[i])
 				task.waveOrderingOverride = &bTreeWaveOrdering
 			}
 		}
@@ -1011,10 +1022,11 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 		}
 	}
 
+	// if prune tasks contain BTree ordering syncWaves, then set the tasks with PruneLast
 	if syncPhaseLastWaveOrdering == "Normal" {
 		syncPhaseLastWave = syncPhaseLastWave + 1
 	} else {
-		syncPhaseLastWave = int(math.Pow(2, math.Floor(math.Log2(float64(syncPhaseLastWave))+1)))
+		syncPhaseLastWave = syncPhaseLastWave * 2
 	}
 
 	for _, task := range tasks {
