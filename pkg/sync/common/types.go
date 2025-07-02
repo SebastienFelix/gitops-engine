@@ -12,8 +12,8 @@ const (
 	AnnotationSyncOptions = "argocd.argoproj.io/sync-options"
 	// AnnotationSyncWave indicates which wave of the sync the resource or hook should be in
 	AnnotationSyncWave = "argocd.argoproj.io/sync-wave"
-	// AnnotationKeyHook contains the hook type of a resource
-	AnnotationSyncWaveOrder = "argocd.argoproj.io/sync-wave-order"
+	// AnnotationUseBinaryTreeWaveOrdering indicates if the resource or hook's wave should be ordered using a binary tree ordering
+	AnnotationUseBinaryTreeWaveOrdering = "argocd.argoproj.io/use-binary-tree-wave-ordering"
 	// AnnotationKeyHook contains the hook type of a resource
 	AnnotationKeyHook = "argocd.argoproj.io/hook"
 	// AnnotationKeyHookDeletePolicy is the policy of deleting a hook

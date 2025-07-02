@@ -2266,7 +2266,7 @@ func TestNeedsClientSideApplyMigration(t *testing.T) {
 	}
 }
 
-func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
+func TestWaveReorderingOfPruneTasksUsingBinaryTreeOrdering(t *testing.T) {
 	ns := testingutils.NewNamespace()
 	ns.SetName("ns")
 	pod1 := testingutils.NewPod()
@@ -2285,12 +2285,12 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 	pod7.SetName("pod-7")
 
 	type Test struct {
-		name                      string
-		target                    []*unstructured.Unstructured
-		live                      []*unstructured.Unstructured
-		expectedWaveOrder         map[string]int
-		expectedWaveOrderingOrder map[string]string
-		pruneLast                 bool
+		name                              string
+		target                            []*unstructured.Unstructured
+		live                              []*unstructured.Unstructured
+		expectedWaveOrder                 map[string]int
+		expectedWaveUseBinaryTreeOrdering map[string]string
+		pruneLast                         bool
 	}
 	runTest := func(test Test) {
 		t.Run(test.name, func(t *testing.T) {
@@ -2319,24 +2319,24 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 			live:   []*unstructured.Unstructured{nil, nil, nil, nil, nil},
 			target: []*unstructured.Unstructured{ns, pod1, pod2, pod3, pod4},
 			// no change in wave order
-			expectedWaveOrder:         map[string]int{ns.GetName(): 0, pod1.GetName(): 0, pod2.GetName(): 0, pod3.GetName(): 0, pod4.GetName(): 0},
-			expectedWaveOrderingOrder: map[string]string{ns.GetName(): "BTree", pod1.GetName(): "BTree", pod2.GetName(): "BTree", pod3.GetName(): "BTree", pod4.GetName(): "BTree"},
+			expectedWaveOrder:                 map[string]int{ns.GetName(): 0, pod1.GetName(): 0, pod2.GetName(): 0, pod3.GetName(): 0, pod4.GetName(): 0},
+			expectedWaveUseBinaryTreeOrdering: map[string]string{ns.GetName(): "true", pod1.GetName(): "true", pod2.GetName(): "true", pod3.GetName(): "true", pod4.GetName(): "true"},
 		},
 		{
 			name:   "sameWave_allPruneTasks",
 			live:   []*unstructured.Unstructured{ns, pod1, pod2, pod3, pod4},
 			target: []*unstructured.Unstructured{nil, nil, nil, nil, nil},
 			// no change in wave order
-			expectedWaveOrder:         map[string]int{ns.GetName(): 0, pod1.GetName(): 0, pod2.GetName(): 0, pod3.GetName(): 0, pod4.GetName(): 0},
-			expectedWaveOrderingOrder: map[string]string{ns.GetName(): "BTree", pod1.GetName(): "BTree", pod2.GetName(): "BTree", pod3.GetName(): "BTree", pod4.GetName(): "BTree"},
+			expectedWaveOrder:                 map[string]int{ns.GetName(): 0, pod1.GetName(): 0, pod2.GetName(): 0, pod3.GetName(): 0, pod4.GetName(): 0},
+			expectedWaveUseBinaryTreeOrdering: map[string]string{ns.GetName(): "true", pod1.GetName(): "true", pod2.GetName(): "true", pod3.GetName(): "true", pod4.GetName(): "true"},
 		},
 		{
 			name:   "sameWave_mixedTasks",
 			live:   []*unstructured.Unstructured{ns, pod1, nil, pod3, pod4},
 			target: []*unstructured.Unstructured{ns, nil, pod2, nil, nil},
 			// no change in wave order
-			expectedWaveOrder:         map[string]int{ns.GetName(): 0, pod1.GetName(): 0, pod2.GetName(): 0, pod3.GetName(): 0, pod4.GetName(): 0},
-			expectedWaveOrderingOrder: map[string]string{ns.GetName(): "BTree", pod1.GetName(): "BTree", pod2.GetName(): "BTree", pod3.GetName(): "BTree", pod4.GetName(): "BTree"},
+			expectedWaveOrder:                 map[string]int{ns.GetName(): 0, pod1.GetName(): 0, pod2.GetName(): 0, pod3.GetName(): 0, pod4.GetName(): 0},
+			expectedWaveUseBinaryTreeOrdering: map[string]string{ns.GetName(): "true", pod1.GetName(): "true", pod2.GetName(): "true", pod3.GetName(): "true", pod4.GetName(): "true"},
 		},
 	}
 
@@ -2359,12 +2359,12 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 				pod3.GetName(): 4, // 4
 				pod4.GetName(): 8, // 8
 			},
-			expectedWaveOrderingOrder: map[string]string{
-				ns.GetName():   "BTree",
-				pod1.GetName(): "BTree",
-				pod2.GetName(): "BTree",
-				pod3.GetName(): "BTree",
-				pod4.GetName(): "BTree",
+			expectedWaveUseBinaryTreeOrdering: map[string]string{
+				ns.GetName():   "true",
+				pod1.GetName(): "true",
+				pod2.GetName(): "true",
+				pod3.GetName(): "true",
+				pod4.GetName(): "true",
 			},
 		},
 		{
@@ -2380,12 +2380,12 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 				pod3.GetName(): 2,  // 4
 				pod4.GetName(): 1,  // 8
 			},
-			expectedWaveOrderingOrder: map[string]string{
-				ns.GetName():   "BTree",
-				pod1.GetName(): "BTree",
-				pod2.GetName(): "BTree",
-				pod3.GetName(): "BTree",
-				pod4.GetName(): "BTree",
+			expectedWaveUseBinaryTreeOrdering: map[string]string{
+				ns.GetName():   "true",
+				pod1.GetName(): "true",
+				pod2.GetName(): "true",
+				pod3.GetName(): "true",
+				pod4.GetName(): "true",
 			},
 		},
 		{
@@ -2403,22 +2403,22 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 				ns.GetName():   0, // 0
 				pod2.GetName(): 2, // 2
 			},
-			expectedWaveOrderingOrder: map[string]string{
-				ns.GetName():   "BTree",
-				pod1.GetName(): "BTree",
-				pod2.GetName(): "BTree",
-				pod3.GetName(): "BTree",
-				pod4.GetName(): "BTree",
+			expectedWaveUseBinaryTreeOrdering: map[string]string{
+				ns.GetName():   "true",
+				pod1.GetName(): "true",
+				pod2.GetName(): "true",
+				pod3.GetName(): "true",
+				pod4.GetName(): "true",
 			},
 		},
 	}
 
 	for _, test := range differentWaveTests {
-		ns.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "0", synccommon.AnnotationSyncWaveOrder: "BTree"})
-		pod1.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "1", synccommon.AnnotationSyncWaveOrder: "BTree"})
-		pod2.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "2", synccommon.AnnotationSyncWaveOrder: "BTree"})
-		pod3.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "4", synccommon.AnnotationSyncWaveOrder: "BTree"})
-		pod4.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "8", synccommon.AnnotationSyncWaveOrder: "BTree"})
+		ns.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "0", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
+		pod1.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "1", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
+		pod2.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "2", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
+		pod3.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "4", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
+		pod4.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "8", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
 
 		runTest(test)
 	}
@@ -2441,12 +2441,12 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 				// no change since non prune tasks
 				ns.GetName(): 0, // 0
 			},
-			expectedWaveOrderingOrder: map[string]string{
-				ns.GetName():   "BTree",
-				pod1.GetName(): "BTree",
-				pod2.GetName(): "BTree",
-				pod3.GetName(): "BTree",
-				pod4.GetName(): "BTree",
+			expectedWaveUseBinaryTreeOrdering: map[string]string{
+				ns.GetName():   "true",
+				pod1.GetName(): "true",
+				pod2.GetName(): "true",
+				pod3.GetName(): "true",
+				pod4.GetName(): "true",
 			},
 		},
 		{
@@ -2465,22 +2465,22 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 				// no change since non prune tasks
 				ns.GetName(): 0, // 0
 			},
-			expectedWaveOrderingOrder: map[string]string{
-				ns.GetName():   "BTree",
-				pod1.GetName(): "BTree",
-				pod2.GetName(): "BTree",
-				pod3.GetName(): "BTree",
-				pod4.GetName(): "BTree",
+			expectedWaveUseBinaryTreeOrdering: map[string]string{
+				ns.GetName():   "true",
+				pod1.GetName(): "true",
+				pod2.GetName(): "true",
+				pod3.GetName(): "true",
+				pod4.GetName(): "true",
 			},
 		},
 	}
 
 	for _, test := range pruneLastTests {
-		ns.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "0", synccommon.AnnotationSyncWaveOrder: "BTree"})
-		pod1.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "1", synccommon.AnnotationSyncWaveOrder: "BTree"})
+		ns.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "0", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
+		pod1.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "1", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
 		pod2.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "2", synccommon.AnnotationSyncOptions: synccommon.SyncOptionPruneLast})
-		pod3.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "4", synccommon.AnnotationSyncWaveOrder: "BTree"})
-		pod4.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "8", synccommon.AnnotationSyncWaveOrder: "BTree"})
+		pod3.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "4", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
+		pod4.SetAnnotations(map[string]string{synccommon.AnnotationSyncWave: "8", synccommon.AnnotationUseBinaryTreeWaveOrdering: "true"})
 
 		runTest(test)
 	}
@@ -2505,16 +2505,16 @@ func TestBTreeWaveReorderingOfPruneTasks(t *testing.T) {
 				pod2.GetName(): 3,  // 3
 				pod6.GetName(): 5,  // 5
 			},
-			expectedWaveOrderingOrder: map[string]string{
-				pod1.GetName(): "BTree",
-				pod3.GetName(): "BTree",
-				pod4.GetName(): "BTree",
-				pod5.GetName(): "BTree",
-				pod7.GetName(): "BTree",
+			expectedWaveUseBinaryTreeOrdering: map[string]string{
+				pod1.GetName(): "true",
+				pod3.GetName(): "true",
+				pod4.GetName(): "true",
+				pod5.GetName(): "true",
+				pod7.GetName(): "true",
 
-				ns.GetName():   "Normal",
-				pod2.GetName(): "Normal",
-				pod6.GetName(): "Normal",
+				ns.GetName():   "false",
+				pod2.GetName(): "false",
+				pod6.GetName(): "false",
 			},
 		},
 	}

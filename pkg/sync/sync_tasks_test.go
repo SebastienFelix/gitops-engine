@@ -488,7 +488,7 @@ func Test_syncTasks_multiStep(t *testing.T) {
 	})
 }
 
-var tasksSingletonNormal = syncTasks{
+var syncTaskUsingNormalWaveOrdering = syncTasks{
 	{
 		targetObj: &unstructured.Unstructured{
 			Object: map[string]any{
@@ -502,15 +502,15 @@ var tasksSingletonNormal = syncTasks{
 	},
 }
 
-func Test_waveSingleton(t *testing.T) {
-	tasks := tasksSingletonNormal
+func Test_syncTaskUsingNormalWaveOrdering(t *testing.T) {
+	tasks := syncTaskUsingNormalWaveOrdering
 	tasksWaves, _ := tasks.waves()
 	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{-1}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{-1}))
 }
 
-var tasksNormal = syncTasks{
+var syncTasksUsingNormalWaveOrdering = syncTasks{
 	{
 		targetObj: &unstructured.Unstructured{
 			Object: map[string]any{
@@ -535,22 +535,22 @@ var tasksNormal = syncTasks{
 	},
 }
 
-func Test_waveNormal(t *testing.T) {
-	tasks := tasksNormal
+func Test_syncTasksUsingNormalWaveOrdering(t *testing.T) {
+	tasks := syncTasksUsingNormalWaveOrdering
 	tasksWaves, _ := tasks.waves()
 	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{-1}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{0}))
 }
 
-var tasksBTreeBothMinimal = syncTasks{
+var syncTasksUsingBinaryTreeWaveOrdering_BothParentTasks = syncTasks{
 	{
 		targetObj: &unstructured.Unstructured{
 			Object: map[string]any{
 				"metadata": map[string]any{
 					"annotations": map[string]any{
-						"argocd.argoproj.io/sync-wave":       "2",
-						"argocd.argoproj.io/sync-wave-order": "BTree",
+						"argocd.argoproj.io/sync-wave":                     "2",
+						"argocd.argoproj.io/use-binary-tree-wave-ordering": "true",
 					},
 				},
 			},
@@ -561,8 +561,8 @@ var tasksBTreeBothMinimal = syncTasks{
 			Object: map[string]any{
 				"metadata": map[string]any{
 					"annotations": map[string]any{
-						"argocd.argoproj.io/sync-wave":       "3",
-						"argocd.argoproj.io/sync-wave-order": "BTree",
+						"argocd.argoproj.io/sync-wave":                     "3",
+						"argocd.argoproj.io/use-binary-tree-wave-ordering": "true",
 					},
 				},
 			},
@@ -570,22 +570,22 @@ var tasksBTreeBothMinimal = syncTasks{
 	},
 }
 
-func Test_waveBTree_BothMinimal(t *testing.T) {
-	tasks := tasksBTreeBothMinimal
+func Test_syncTasksUsingBinaryTreeWaveOrdering_BothParentTasks(t *testing.T) {
+	tasks := syncTasksUsingBinaryTreeWaveOrdering_BothParentTasks
 	tasksWaves, _ := tasks.waves()
 	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2, 3}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{2, 3}))
 }
 
-var tasksBTreeOneMinimal = syncTasks{
+var syncTasksUsingBinaryTreeWaveOrdering_OneParentTasks = syncTasks{
 	{
 		targetObj: &unstructured.Unstructured{
 			Object: map[string]any{
 				"metadata": map[string]any{
 					"annotations": map[string]any{
-						"argocd.argoproj.io/sync-wave":       "2",
-						"argocd.argoproj.io/sync-wave-order": "BTree",
+						"argocd.argoproj.io/sync-wave":                     "2",
+						"argocd.argoproj.io/use-binary-tree-wave-ordering": "true",
 					},
 				},
 			},
@@ -596,8 +596,8 @@ var tasksBTreeOneMinimal = syncTasks{
 			Object: map[string]any{
 				"metadata": map[string]any{
 					"annotations": map[string]any{
-						"argocd.argoproj.io/sync-wave":       "4",
-						"argocd.argoproj.io/sync-wave-order": "BTree",
+						"argocd.argoproj.io/sync-wave":                     "4",
+						"argocd.argoproj.io/use-binary-tree-wave-ordering": "true",
 					},
 				},
 			},
@@ -605,10 +605,20 @@ var tasksBTreeOneMinimal = syncTasks{
 	},
 }
 
-func Test_waveBTree_OneMinimal(t *testing.T) {
-	tasks := tasksBTreeOneMinimal
+func Test_syncTasksusingBinaryTreeWaveOrdering_OneParentTasks(t *testing.T) {
+	tasks := syncTasksUsingBinaryTreeWaveOrdering_OneParentTasks
 	tasksWaves, _ := tasks.waves()
 	tasksLastWaves, _ := tasks.lastWaves()
 	assert.True(t, reflect.DeepEqual(tasksWaves, []int{2}))
 	assert.True(t, reflect.DeepEqual(tasksLastWaves, []int{4}))
+}
+
+func Test_LessUsingBinaryTreeOrdering(t *testing.T) {
+	assert.True(t, LessUsingBinaryTreeOrdering(-4, -1))
+	assert.True(t, LessUsingBinaryTreeOrdering(-4, 2))
+	assert.True(t, LessUsingBinaryTreeOrdering(2, 4))
+	assert.True(t, LessUsingBinaryTreeOrdering(2, 8))
+	assert.False(t, LessUsingBinaryTreeOrdering(2, 3))
+	assert.False(t, LessUsingBinaryTreeOrdering(4, 3))
+	assert.False(t, LessUsingBinaryTreeOrdering(2, 6))
 }

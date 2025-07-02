@@ -71,5 +71,9 @@ func Test_syncTask_deleteBeforeCreation(t *testing.T) {
 
 func Test_syncTask_wave(t *testing.T) {
 	assert.Equal(t, 0, (&syncTask{targetObj: testingutils.NewPod()}).wave())
+	assert.Equal(t, "false", (&syncTask{targetObj: testingutils.NewPod()}).waveUseBinaryTreeOrdering())
 	assert.Equal(t, 1, (&syncTask{targetObj: testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave", "1")}).wave())
+	assert.Equal(t, "false", (&syncTask{targetObj: testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave", "1")}).waveUseBinaryTreeOrdering())
+	assert.Equal(t, 1, (&syncTask{targetObj: testingutils.Annotate(testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave", "1"), "argocd.argoproj.io/use-binary-tree-wave-ordering", "true")}).wave())
+	assert.Equal(t, "true", (&syncTask{targetObj: testingutils.Annotate(testingutils.Annotate(testingutils.NewPod(), "argocd.argoproj.io/sync-wave", "1"), "argocd.argoproj.io/use-binary-tree-wave-ordering", "true")}).waveUseBinaryTreeOrdering())
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"reflect"
 	"slices"
 	"sort"
@@ -565,9 +564,9 @@ func (sc *syncContext) Sync() {
 
 	// remove any tasks not in this wave
 	phase := tasks.phase()
-	waves, wavesOrdering := tasks.waves()
-	lastWaves, lastWavesOrdering := tasks.lastWaves()
-	finalWaves := phase == tasks.lastPhase() && reflect.DeepEqual(waves, lastWaves) && wavesOrdering == lastWavesOrdering
+	waves, wavesUseBinaryTreeOrdering := tasks.waves()
+	lastWaves, lastWavesUseBinaryTreeOrdering := tasks.lastWaves()
+	finalWaves := phase == tasks.lastPhase() && reflect.DeepEqual(waves, lastWaves) && wavesUseBinaryTreeOrdering == lastWavesUseBinaryTreeOrdering
 
 	// if it is the last phase/wave and the only remaining tasks are non-hooks, the we are successful
 	// EVEN if those objects subsequently degraded
@@ -576,7 +575,7 @@ func (sc *syncContext) Sync() {
 
 	sc.log.WithValues("phase", phase, "wave", waves, "tasks", tasks, "syncFailTasks", syncFailTasks).V(1).Info("Filtering tasks in correct phase and wave")
 	tasks = tasks.Filter(func(t *syncTask) bool {
-		return t.phase == phase && slices.Contains(waves, t.wave()) && t.waveOrdering() == wavesOrdering
+		return t.phase == phase && slices.Contains(waves, t.wave()) && t.waveUseBinaryTreeOrdering() == wavesUseBinaryTreeOrdering
 	})
 
 	sc.setOperationPhase(common.OperationRunning, "one or more tasks are running")
@@ -906,104 +905,105 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 	}
 
 	// for prune tasks, modify the waves for proper cleanup i.e reverse of sync wave (creation order)
-	// if all prune tasks have a normal syncWaveOrdering, use the legacy method. Otherwise, change the
-	// syncWaveOrdering of all prune tasks to BTree and modify the waves to decreasing power of 2.
-	// For prune tasks which already had a BTree syncWaveOrdering, set an identical syncWave to tasks which
+	// if all prune tasks have a normal syncWaveUseBinaryTreeOrdering, use the legacy method. Otherwise, change the
+	// syncWaveUseBinaryTreeOrdering of all prune tasks to BTree and modify the waves to decreasing power of 2.
+	// For prune tasks which already had a BTree syncWaveUseBinaryTreeOrdering, set an identical syncWave to tasks which
 	// have the same level in a complete binary tree rooted at 1 where each node n has 2*n and 2*n+1 as children.
 
-	normalPruneTasks := make(map[int][]*syncTask)
+	pruntTasksUsingNormalOrdering := make(map[int][]*syncTask)
 	for _, task := range tasks {
-		if task.isPrune() && task.waveOrdering() == "Normal" {
-			normalPruneTasks[task.wave()] = append(normalPruneTasks[task.wave()], task)
+		if task.isPrune() && task.waveUseBinaryTreeOrdering() == "false" {
+			pruntTasksUsingNormalOrdering[task.wave()] = append(pruntTasksUsingNormalOrdering[task.wave()], task)
 		}
 	}
-	var uniqueNormalPruneWaves []int
-	for k := range normalPruneTasks {
-		uniqueNormalPruneWaves = append(uniqueNormalPruneWaves, k)
+	var uniquePruneWavesUsingNormalOrdering []int
+	for k := range pruntTasksUsingNormalOrdering {
+		uniquePruneWavesUsingNormalOrdering = append(uniquePruneWavesUsingNormalOrdering, k)
 	}
 
-	sort.Ints(uniqueNormalPruneWaves)
-	bTreePruneTasks := make(map[int][]*syncTask)
+	sort.Ints(uniquePruneWavesUsingNormalOrdering)
+	pruneTasksUsingBinaryTreeOrdering := make(map[int][]*syncTask)
 	for _, task := range tasks {
-		if task.isPrune() && task.waveOrdering() == "BTree" {
-			bTreePruneTasks[task.wave()] = append(bTreePruneTasks[task.wave()], task)
+		if task.isPrune() && task.waveUseBinaryTreeOrdering() == "true" {
+			pruneTasksUsingBinaryTreeOrdering[task.wave()] = append(pruneTasksUsingBinaryTreeOrdering[task.wave()], task)
 		}
 	}
 
-	if len(bTreePruneTasks) > 0 {
-		var uniqueBTreePruneWaves []int
-		for k := range bTreePruneTasks {
-			uniqueBTreePruneWaves = append(uniqueBTreePruneWaves, k)
+	if len(pruneTasksUsingBinaryTreeOrdering) > 0 {
+		var uniquePruneWavesUsingBinaryTreeOrdering []int
+		for k := range pruneTasksUsingBinaryTreeOrdering {
+			uniquePruneWavesUsingBinaryTreeOrdering = append(uniquePruneWavesUsingBinaryTreeOrdering, k)
 		}
-		sort.Ints(uniqueBTreePruneWaves)
+		sort.Ints(uniquePruneWavesUsingBinaryTreeOrdering)
 
-		pruneWaves := []int{0}
-		for i := 1; i < len(uniqueNormalPruneWaves); i++ {
-			pruneWaves = append(pruneWaves, i)
+		pruneTasksWavesValues := []int{0}
+		for i := 1; i < len(uniquePruneWavesUsingNormalOrdering); i++ {
+			pruneTasksWavesValues = append(pruneTasksWavesValues, i)
 		}
-		nextPotentialWave := len(uniqueNormalPruneWaves)
-		if len(uniqueNormalPruneWaves) != 0 {
-			pruneWaves = append(pruneWaves, nextPotentialWave)
+		nextPotentialWaveValue := len(uniquePruneWavesUsingNormalOrdering)
+		if len(uniquePruneWavesUsingNormalOrdering) != 0 {
+			pruneTasksWavesValues = append(pruneTasksWavesValues, nextPotentialWaveValue)
 		}
-		for i := 1; i < len(uniqueBTreePruneWaves); i++ {
-			currentBTreeWaveLevel := biggestPowerOf2InferiorThan(uniqueBTreePruneWaves[i])
-			previousBTreeWaveLevel := biggestPowerOf2InferiorThan(uniqueBTreePruneWaves[i-1])
+		for i := 1; i < len(uniquePruneWavesUsingBinaryTreeOrdering); i++ {
+			currentBTreeWaveLevel := biggestPowerOf2InferiorThan(uniquePruneWavesUsingBinaryTreeOrdering[i])
+			previousBTreeWaveLevel := biggestPowerOf2InferiorThan(uniquePruneWavesUsingBinaryTreeOrdering[i-1])
 			if currentBTreeWaveLevel == previousBTreeWaveLevel {
-				pruneWaves = append(pruneWaves, nextPotentialWave)
+				pruneTasksWavesValues = append(pruneTasksWavesValues, nextPotentialWaveValue)
 			} else {
-				nextPotentialWave++
-				pruneWaves = append(pruneWaves, nextPotentialWave)
+				nextPotentialWaveValue++
+				pruneTasksWavesValues = append(pruneTasksWavesValues, nextPotentialWaveValue)
 			}
 		}
 
-		bTreeWave := int(math.Pow(2, float64(pruneWaves[len(pruneWaves)-1])))
-		newPruneWaves := []int{bTreeWave}
-		n := len(pruneWaves)
-		for i := 1; i < len(pruneWaves); i++ {
-			if pruneWaves[n-i-1] == pruneWaves[n-i] {
-				newPruneWaves = append(newPruneWaves, bTreeWave)
+		pruneTasksWavesNewValues := PowInt(2, pruneTasksWavesValues[len(pruneTasksWavesValues)-1])
+		newPruneWaves := []int{pruneTasksWavesNewValues}
+		n := len(pruneTasksWavesValues)
+		for i := 1; i < len(pruneTasksWavesValues); i++ {
+			if pruneTasksWavesValues[n-i-1] == pruneTasksWavesValues[n-i] {
+				newPruneWaves = append(newPruneWaves, pruneTasksWavesNewValues)
 			} else {
-				bTreeWave = bTreeWave / 2
-				newPruneWaves = append(newPruneWaves, bTreeWave)
+				pruneTasksWavesNewValues /= 2
+				newPruneWaves = append(newPruneWaves, pruneTasksWavesNewValues)
 			}
 		}
 
-		bTreeWaveOrdering := "BTree"
+		bTreeWaveUseBinaryTreeOrdering := "true"
 
-		for i := 0; i < len(uniqueNormalPruneWaves); i++ {
+		for i := range uniquePruneWavesUsingNormalOrdering {
 			// Normal waves to reorder
-			iWave := uniqueNormalPruneWaves[i]
+			iWave := uniquePruneWavesUsingNormalOrdering[i]
 
-			for _, task := range normalPruneTasks[iWave] {
+			for _, task := range pruntTasksUsingNormalOrdering[iWave] {
 				task.waveOverride = &newPruneWaves[i]
-				task.waveOrderingOverride = &bTreeWaveOrdering
+				task.waveUseBinaryTreeOrderingOverride = &bTreeWaveUseBinaryTreeOrdering
 			}
 		}
 
-		for i := len(uniqueNormalPruneWaves); i < len(uniqueNormalPruneWaves)+len(uniqueBTreePruneWaves); i++ {
+		n = len(uniquePruneWavesUsingNormalOrdering)
+		for i := range uniquePruneWavesUsingBinaryTreeOrdering {
 			// BTree waves to reorder
-			iWave := uniqueBTreePruneWaves[i-len(uniqueNormalPruneWaves)]
+			iWave := uniquePruneWavesUsingBinaryTreeOrdering[i]
 
-			for _, task := range bTreePruneTasks[iWave] {
-				task.waveOverride = &(newPruneWaves[i])
-				task.waveOrderingOverride = &bTreeWaveOrdering
+			for _, task := range pruneTasksUsingBinaryTreeOrdering[iWave] {
+				task.waveOverride = &(newPruneWaves[n+i])
+				task.waveUseBinaryTreeOrderingOverride = &bTreeWaveUseBinaryTreeOrdering
 			}
 		}
 
 	} else {
 
 		// reorder waves for pruning tasks using symmetric swap on prune waves
-		n := len(uniqueNormalPruneWaves)
+		n := len(uniquePruneWavesUsingNormalOrdering)
 		for i := 0; i < n/2; i++ {
 			// waves to swap
-			startWave := uniqueNormalPruneWaves[i]
-			endWave := uniqueNormalPruneWaves[n-1-i]
+			startWave := uniquePruneWavesUsingNormalOrdering[i]
+			endWave := uniquePruneWavesUsingNormalOrdering[n-1-i]
 
-			for _, task := range normalPruneTasks[startWave] {
+			for _, task := range pruntTasksUsingNormalOrdering[startWave] {
 				task.waveOverride = &endWave
 			}
 
-			for _, task := range normalPruneTasks[endWave] {
+			for _, task := range pruntTasksUsingNormalOrdering[endWave] {
 				task.waveOverride = &startWave
 			}
 		}
@@ -1012,28 +1012,28 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 	// for pruneLast tasks, modify the wave to sync phase last wave of tasks + 1
 	// to ensure proper cleanup, syncPhaseLastWave should also consider prune tasks to determine last wave
 	syncPhaseLastWave := 0
-	syncPhaseLastWaveOrdering := "Normal"
+	syncPhaseLastWaveUseBinaryTreeOrdering := "false"
 	for _, task := range tasks {
 		if task.phase == common.SyncPhaseSync {
 			if task.wave() > syncPhaseLastWave {
 				syncPhaseLastWave = task.wave()
-				syncPhaseLastWaveOrdering = task.waveOrdering()
+				syncPhaseLastWaveUseBinaryTreeOrdering = task.waveUseBinaryTreeOrdering()
 			}
 		}
 	}
 
 	// if prune tasks contain BTree ordering syncWaves, then set the tasks with PruneLast
-	if syncPhaseLastWaveOrdering == "Normal" {
-		syncPhaseLastWave = syncPhaseLastWave + 1
+	if syncPhaseLastWaveUseBinaryTreeOrdering == "false" {
+		syncPhaseLastWave += 1
 	} else {
-		syncPhaseLastWave = syncPhaseLastWave * 2
+		syncPhaseLastWave *= 2
 	}
 
 	for _, task := range tasks {
 		if task.isPrune() &&
 			(sc.pruneLast || resourceutil.HasAnnotationOption(task.liveObj, common.AnnotationSyncOptions, common.SyncOptionPruneLast)) {
 			task.waveOverride = &syncPhaseLastWave
-			task.waveOrderingOverride = &syncPhaseLastWaveOrdering
+			task.waveUseBinaryTreeOrderingOverride = &syncPhaseLastWaveUseBinaryTreeOrdering
 		}
 	}
 

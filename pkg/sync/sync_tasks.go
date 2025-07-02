@@ -2,7 +2,6 @@ package sync
 
 import (
 	"fmt"
-	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -140,23 +139,23 @@ func (s syncTasks) Sort() {
 	})
 }
 
-func LessBTree(u int, v int) bool {
-	if (u <= 1) && (v <= 1) {
-		return u < v
+func LessUsingBinaryTreeOrdering(i int, j int) bool {
+	if (i <= 1) && (j <= 1) {
+		return i < j
 	}
-	if u <= 1 {
+	if i <= 1 {
 		return true
 	}
-	if v <= 1 {
+	if j <= 1 {
 		return false
 	}
-	xMax := int(math.Floor(math.Log2(float64(v)/float64(u))) + 1)
-	for i := 1; i <= xMax; i++ {
-		N := int(math.Pow(2, float64(i)))
-		w := v - int(N)*u
-		if (w >= 0) && (w < N) {
+
+	N := 2
+	for j-int(N)*i >= 0 {
+		if j-N*i < N {
 			return true
 		}
+		N *= 2
 	}
 	return false
 }
@@ -170,6 +169,17 @@ func biggestPowerOf2InferiorThan(n int) int {
 		i = i * 2
 	}
 	return i / 2
+}
+
+func PowInt(n int, m int) int {
+	result := 1
+	if m <= 0 {
+		return result
+	}
+	for i := 1; i <= m; i++ {
+		result = result * n
+	}
+	return result
 }
 
 // adjust order of tasks and bubble up tasks which are dependencies of other tasks
@@ -286,32 +296,32 @@ func (s syncTasks) phase() common.SyncPhase {
 }
 
 func (s syncTasks) waves() ([]int, string) {
-	var waves []int
-	tasksNormalWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "Normal" })
-	tasksBTreeWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "BTree" })
-	if len(tasksNormalWaves) > 0 {
-		waves = append(waves, tasksNormalWaves[0].wave())
-		return waves, "Normal"
+	var wavesValues []int
+	tasksUsingNormalWaveOrdering := s.Filter(func(t *syncTask) bool { return syncwaves.UseBinaryTreeWaveOrdering(t.obj()) == "false" })
+	tasksUsingBinaryTreeWaveOrdering := s.Filter(func(t *syncTask) bool { return syncwaves.UseBinaryTreeWaveOrdering(t.obj()) == "true" })
+	if len(tasksUsingNormalWaveOrdering) > 0 {
+		wavesValues = append(wavesValues, tasksUsingNormalWaveOrdering[0].wave())
+		return wavesValues, "false"
 	}
-	if len(tasksBTreeWaves) > 0 {
-		for iSyncTask := range tasksBTreeWaves {
-			candidateTask := tasksBTreeWaves[iSyncTask]
+	if len(tasksUsingBinaryTreeWaveOrdering) > 0 {
+		for iSyncTask := range tasksUsingBinaryTreeWaveOrdering {
+			candidateTask := tasksUsingBinaryTreeWaveOrdering[iSyncTask]
 			candidateTaskHasNoAntecedent := true
-			for jSyncTask := range tasksBTreeWaves {
-				task := tasksBTreeWaves[jSyncTask]
-				if LessBTree(syncwaves.Wave(task.obj()), syncwaves.Wave(candidateTask.obj())) {
+			for jSyncTask := range tasksUsingBinaryTreeWaveOrdering {
+				task := tasksUsingBinaryTreeWaveOrdering[jSyncTask]
+				if LessUsingBinaryTreeOrdering(syncwaves.Wave(task.obj()), syncwaves.Wave(candidateTask.obj())) {
 					candidateTaskHasNoAntecedent = false
 					break
 				}
 			}
 			if candidateTaskHasNoAntecedent {
-				waves = append(waves, syncwaves.Wave(candidateTask.obj()))
+				wavesValues = append(wavesValues, syncwaves.Wave(candidateTask.obj()))
 			}
 		}
-		return waves, "BTree"
+		return wavesValues, "true"
 	}
-	waves = append(waves, 0)
-	return waves, "Normal"
+	wavesValues = append(wavesValues, 0)
+	return wavesValues, "false"
 }
 
 func (s syncTasks) lastPhase() common.SyncPhase {
@@ -322,43 +332,41 @@ func (s syncTasks) lastPhase() common.SyncPhase {
 }
 
 func (s syncTasks) lastWaves() ([]int, string) {
-	tasksNormalWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "Normal" })
-	tasksBTreeWaves := s.Filter(func(t *syncTask) bool { return syncwaves.WaveOrdering(t.obj()) == "BTree" })
+	tasksUsingNormalWaveOrdering := s.Filter(func(t *syncTask) bool { return syncwaves.UseBinaryTreeWaveOrdering(t.obj()) == "false" })
+	tasksUsingBinaryTreeWaveOrdering := s.Filter(func(t *syncTask) bool { return syncwaves.UseBinaryTreeWaveOrdering(t.obj()) == "true" })
 
-	var lastwaves []int
+	var lastWavesValues []int
 
-	if len(tasksBTreeWaves) > 0 && len(tasksNormalWaves) > 0 {
-		lastwaves = append(lastwaves, tasksNormalWaves[len(tasksNormalWaves)-1].wave()+1)
-		return lastwaves, "Normal"
-	}
-	if len(tasksNormalWaves) > 0 {
-		lastwaves = append(lastwaves, tasksNormalWaves[len(tasksNormalWaves)-1].wave())
-		return lastwaves, "Normal"
-	}
-	if len(tasksBTreeWaves) > 0 {
-		for iSyncTask := range tasksBTreeWaves {
+	if len(tasksUsingBinaryTreeWaveOrdering) > 0 {
+		for iSyncTask := range tasksUsingBinaryTreeWaveOrdering {
 			candidateTask := s[iSyncTask]
 			candidateTaskHasNoSuccessor := true
 			for jSyncTask := range s {
 				task := s[jSyncTask]
-				if LessBTree(syncwaves.Wave(candidateTask.obj()), syncwaves.Wave(task.obj())) {
+				if LessUsingBinaryTreeOrdering(syncwaves.Wave(candidateTask.obj()), syncwaves.Wave(task.obj())) {
 					candidateTaskHasNoSuccessor = false
 					break
 				}
 
 			}
 			if candidateTaskHasNoSuccessor {
-				lastwaves = append(lastwaves, syncwaves.Wave(candidateTask.obj()))
+				lastWavesValues = append(lastWavesValues, syncwaves.Wave(candidateTask.obj()))
 			}
 		}
-		return lastwaves, "Btree"
+		return lastWavesValues, "true"
 	}
-	lastwaves = append(lastwaves, 0)
-	return lastwaves, "Normal"
+
+	if len(tasksUsingNormalWaveOrdering) > 0 {
+		lastWavesValues = append(lastWavesValues, tasksUsingNormalWaveOrdering[len(tasksUsingNormalWaveOrdering)-1].wave())
+		return lastWavesValues, "false"
+	}
+
+	lastWavesValues = append(lastWavesValues, 0)
+	return lastWavesValues, "false"
 }
 
 func (s syncTasks) multiStep() bool {
-	waves, _ := s.waves()
-	lastWaves, _ := s.lastWaves()
-	return !reflect.DeepEqual(waves, lastWaves) || s.phase() != s.lastPhase()
+	wavesValues, wavesUseBinaryTreeOrdering := s.waves()
+	lastWavesValues, lastWavesUseBinaryTreeOrdering := s.lastWaves()
+	return !reflect.DeepEqual(wavesValues, lastWavesValues) || wavesUseBinaryTreeOrdering != lastWavesUseBinaryTreeOrdering || s.phase() != s.lastPhase()
 }
