@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -562,16 +564,19 @@ func (sc *syncContext) Sync() {
 
 	// remove any tasks not in this wave
 	phase := tasks.phase()
-	wave := tasks.wave()
-	finalWave := phase == tasks.lastPhase() && wave == tasks.lastWave()
+	waves, wavesUseBinaryTreeOrdering := tasks.waves()
+	lastWaves, lastWavesUseBinaryTreeOrdering := tasks.lastWaves()
+	finalWaves := phase == tasks.lastPhase() && reflect.DeepEqual(waves, lastWaves) && wavesUseBinaryTreeOrdering == lastWavesUseBinaryTreeOrdering
 
 	// if it is the last phase/wave and the only remaining tasks are non-hooks, the we are successful
 	// EVEN if those objects subsequently degraded
 	// This handles the common case where neither hooks or waves are used and a sync equates to simply an (asynchronous) kubectl apply of manifests, which succeeds immediately.
-	remainingTasks := tasks.Filter(func(t *syncTask) bool { return t.phase != phase || wave != t.wave() || t.isHook() })
+	remainingTasks := tasks.Filter(func(t *syncTask) bool { return t.phase != phase || !slices.Contains(waves, t.wave()) || t.isHook() })
 
-	sc.log.WithValues("phase", phase, "wave", wave, "tasks", tasks, "syncFailTasks", syncFailTasks).V(1).Info("Filtering tasks in correct phase and wave")
-	tasks = tasks.Filter(func(t *syncTask) bool { return t.phase == phase && t.wave() == wave })
+	sc.log.WithValues("phase", phase, "wave", waves, "tasks", tasks, "syncFailTasks", syncFailTasks).V(1).Info("Filtering tasks in correct phase and wave")
+	tasks = tasks.Filter(func(t *syncTask) bool {
+		return t.phase == phase && slices.Contains(waves, t.wave()) && t.waveUseBinaryTreeOrdering() == wavesUseBinaryTreeOrdering
+	})
 
 	sc.setOperationPhase(common.OperationRunning, "one or more tasks are running")
 
@@ -579,7 +584,7 @@ func (sc *syncContext) Sync() {
 	runState := sc.runTasks(tasks, false)
 
 	if sc.syncWaveHook != nil && runState != failed {
-		err := sc.syncWaveHook(phase, wave, finalWave)
+		err := sc.syncWaveHook(phase, waves, finalWaves)
 		if err != nil {
 			sc.deleteHooks(hooksPendingDeletionFailed)
 			sc.setOperationPhase(common.OperationFailed, fmt.Sprintf("SyncWaveHook failed: %v", err))
@@ -900,51 +905,135 @@ func (sc *syncContext) getSyncTasks() (_ syncTasks, successful bool) {
 	}
 
 	// for prune tasks, modify the waves for proper cleanup i.e reverse of sync wave (creation order)
-	pruneTasks := make(map[int][]*syncTask)
+	// if all prune tasks have a normal syncWaveUseBinaryTreeOrdering, use the legacy method. Otherwise, change the
+	// syncWaveUseBinaryTreeOrdering of all prune tasks to BTree and modify the waves to decreasing power of 2.
+	// For prune tasks which already had a BTree syncWaveUseBinaryTreeOrdering, set an identical syncWave to tasks which
+	// have the same level in a complete binary tree rooted at 1 where each node n has 2*n and 2*n+1 as children.
+
+	pruntTasksUsingNormalOrdering := make(map[int][]*syncTask)
 	for _, task := range tasks {
-		if task.isPrune() {
-			pruneTasks[task.wave()] = append(pruneTasks[task.wave()], task)
+		if task.isPrune() && task.waveUseBinaryTreeOrdering() == "false" {
+			pruntTasksUsingNormalOrdering[task.wave()] = append(pruntTasksUsingNormalOrdering[task.wave()], task)
+		}
+	}
+	var uniquePruneWavesUsingNormalOrdering []int
+	for k := range pruntTasksUsingNormalOrdering {
+		uniquePruneWavesUsingNormalOrdering = append(uniquePruneWavesUsingNormalOrdering, k)
+	}
+
+	sort.Ints(uniquePruneWavesUsingNormalOrdering)
+	pruneTasksUsingBinaryTreeOrdering := make(map[int][]*syncTask)
+	for _, task := range tasks {
+		if task.isPrune() && task.waveUseBinaryTreeOrdering() == "true" {
+			pruneTasksUsingBinaryTreeOrdering[task.wave()] = append(pruneTasksUsingBinaryTreeOrdering[task.wave()], task)
 		}
 	}
 
-	var uniquePruneWaves []int
-	for k := range pruneTasks {
-		uniquePruneWaves = append(uniquePruneWaves, k)
-	}
-	sort.Ints(uniquePruneWaves)
+	if len(pruneTasksUsingBinaryTreeOrdering) > 0 {
+		var uniquePruneWavesUsingBinaryTreeOrdering []int
+		for k := range pruneTasksUsingBinaryTreeOrdering {
+			uniquePruneWavesUsingBinaryTreeOrdering = append(uniquePruneWavesUsingBinaryTreeOrdering, k)
+		}
+		sort.Ints(uniquePruneWavesUsingBinaryTreeOrdering)
 
-	// reorder waves for pruning tasks using symmetric swap on prune waves
-	n := len(uniquePruneWaves)
-	for i := 0; i < n/2; i++ {
-		// waves to swap
-		startWave := uniquePruneWaves[i]
-		endWave := uniquePruneWaves[n-1-i]
-
-		for _, task := range pruneTasks[startWave] {
-			task.waveOverride = &endWave
+		pruneTasksWavesValues := []int{0}
+		for i := 1; i < len(uniquePruneWavesUsingNormalOrdering); i++ {
+			pruneTasksWavesValues = append(pruneTasksWavesValues, i)
+		}
+		nextPotentialWaveValue := len(uniquePruneWavesUsingNormalOrdering)
+		if len(uniquePruneWavesUsingNormalOrdering) != 0 {
+			pruneTasksWavesValues = append(pruneTasksWavesValues, nextPotentialWaveValue)
+		}
+		for i := 1; i < len(uniquePruneWavesUsingBinaryTreeOrdering); i++ {
+			currentBTreeWaveLevel := biggestPowerOf2InferiorThan(uniquePruneWavesUsingBinaryTreeOrdering[i])
+			previousBTreeWaveLevel := biggestPowerOf2InferiorThan(uniquePruneWavesUsingBinaryTreeOrdering[i-1])
+			if currentBTreeWaveLevel == previousBTreeWaveLevel {
+				pruneTasksWavesValues = append(pruneTasksWavesValues, nextPotentialWaveValue)
+			} else {
+				nextPotentialWaveValue++
+				pruneTasksWavesValues = append(pruneTasksWavesValues, nextPotentialWaveValue)
+			}
 		}
 
-		for _, task := range pruneTasks[endWave] {
-			task.waveOverride = &startWave
+		pruneTasksWavesNewValues := PowInt(2, pruneTasksWavesValues[len(pruneTasksWavesValues)-1])
+		newPruneWaves := []int{pruneTasksWavesNewValues}
+		n := len(pruneTasksWavesValues)
+		for i := 1; i < len(pruneTasksWavesValues); i++ {
+			if pruneTasksWavesValues[n-i-1] == pruneTasksWavesValues[n-i] {
+				newPruneWaves = append(newPruneWaves, pruneTasksWavesNewValues)
+			} else {
+				pruneTasksWavesNewValues /= 2
+				newPruneWaves = append(newPruneWaves, pruneTasksWavesNewValues)
+			}
+		}
+
+		bTreeWaveUseBinaryTreeOrdering := "true"
+
+		for i := range uniquePruneWavesUsingNormalOrdering {
+			// Normal waves to reorder
+			iWave := uniquePruneWavesUsingNormalOrdering[i]
+
+			for _, task := range pruntTasksUsingNormalOrdering[iWave] {
+				task.waveOverride = &newPruneWaves[i]
+				task.waveUseBinaryTreeOrderingOverride = &bTreeWaveUseBinaryTreeOrdering
+			}
+		}
+
+		n = len(uniquePruneWavesUsingNormalOrdering)
+		for i := range uniquePruneWavesUsingBinaryTreeOrdering {
+			// BTree waves to reorder
+			iWave := uniquePruneWavesUsingBinaryTreeOrdering[i]
+
+			for _, task := range pruneTasksUsingBinaryTreeOrdering[iWave] {
+				task.waveOverride = &(newPruneWaves[n+i])
+				task.waveUseBinaryTreeOrderingOverride = &bTreeWaveUseBinaryTreeOrdering
+			}
+		}
+
+	} else {
+
+		// reorder waves for pruning tasks using symmetric swap on prune waves
+		n := len(uniquePruneWavesUsingNormalOrdering)
+		for i := 0; i < n/2; i++ {
+			// waves to swap
+			startWave := uniquePruneWavesUsingNormalOrdering[i]
+			endWave := uniquePruneWavesUsingNormalOrdering[n-1-i]
+
+			for _, task := range pruntTasksUsingNormalOrdering[startWave] {
+				task.waveOverride = &endWave
+			}
+
+			for _, task := range pruntTasksUsingNormalOrdering[endWave] {
+				task.waveOverride = &startWave
+			}
 		}
 	}
 
 	// for pruneLast tasks, modify the wave to sync phase last wave of tasks + 1
 	// to ensure proper cleanup, syncPhaseLastWave should also consider prune tasks to determine last wave
 	syncPhaseLastWave := 0
+	syncPhaseLastWaveUseBinaryTreeOrdering := "false"
 	for _, task := range tasks {
 		if task.phase == common.SyncPhaseSync {
 			if task.wave() > syncPhaseLastWave {
 				syncPhaseLastWave = task.wave()
+				syncPhaseLastWaveUseBinaryTreeOrdering = task.waveUseBinaryTreeOrdering()
 			}
 		}
 	}
-	syncPhaseLastWave = syncPhaseLastWave + 1
+
+	// if prune tasks contain BTree ordering syncWaves, then set the tasks with PruneLast
+	if syncPhaseLastWaveUseBinaryTreeOrdering == "false" {
+		syncPhaseLastWave += 1
+	} else {
+		syncPhaseLastWave *= 2
+	}
 
 	for _, task := range tasks {
 		if task.isPrune() &&
 			(sc.pruneLast || resourceutil.HasAnnotationOption(task.liveObj, common.AnnotationSyncOptions, common.SyncOptionPruneLast)) {
 			task.waveOverride = &syncPhaseLastWave
+			task.waveUseBinaryTreeOrderingOverride = &syncPhaseLastWaveUseBinaryTreeOrdering
 		}
 	}
 
